@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dino RUN</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- LOADING SCREEN -->
+<div id="loading-screen">
+  <div class="loader-content">
+    <h1 class="loader-title">NEXUS</h1>
+    <div class="loader-bar-container">
+      <div id="loader-bar"></div>
+    </div>
+    <p id="loader-text">Loading Assets... 0%</p>
+  </div>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<!-- GLOBAL FULLSCREEN BUTTON -->
+<button id="global-fs-btn" onclick="toggleFullScreen()" style="position:fixed; top:15px; right:15px; z-index:9999; background:rgba(0,0,0,0.4); color:white; border:none; width:40px; height:40px; border-radius:8px; font-size:20px; display:flex; align-items:center; justify-content:center; cursor:pointer; backdrop-filter:blur(4px);">⛶</button>
+
+<!-- IN-GAME HUD -->
+<div id="ui" style="display:none">
+  <div class="hud-left">
+    <div class="hud-pill" id="score-box"><span class="hud-icon">⭐</span> <span>0</span></div>
+    <div class="hud-pill hud-coin" id="coin-box"><span class="hud-icon">🪙</span> <span>0</span></div>
+  </div>
+  <div class="hud-right">
+    <div class="hud-pill hud-lives" id="lives-box">❤️❤️❤️</div>
+    <button class="hud-pause" id="pause-btn" onclick="togglePause()">⏸</button>
+  </div>
+</div>
+
+<div id="dim-name"></div>
+
+<div id="powerup-bar">
+  <div class="pu-badge" id="pu-shield"><span class="pu-icon">🛡</span> Shield</div>
+  <div class="pu-badge" id="pu-magnet"><span class="pu-icon">🧲</span> Magnet</div>
+  <div class="pu-badge" id="pu-speed"><span class="pu-icon">⚡</span> Speed</div>
+  <div class="pu-badge" id="pu-gun"><span class="pu-icon">🔫</span> 0</div>
+</div>
+
+<!-- MAIN MENU / LOBBY -->
+<div id="overlay" style="display:none">
+  <!-- CORNER LOGO -->
+  <div class="corner-logo">
+    <h1 class="game-title">Dino RUN</h1>
+  </div>
+
+  <div class="lobby-top">
+    <div class="lobby-stat" id="lobby-score"><span class="stat-icon">🏆</span> <span>Best: 0</span></div>
+    <div class="lobby-stat lobby-coins-stat" id="lobby-coins"><span class="stat-icon">🪙</span> <span>0</span></div>
+  </div>
+
+  <div class="lobby-center" onclick="startGame()">
+    <p class="tap-hint">TAP TO PLAY</p>
+  </div>
+
+  <div class="lobby-bottom">
+    <button class="game-btn gb-blue" onclick="showCharScreen()"><span class="gb-icon">👤</span> Characters</button>
+    <button class="game-btn gb-amber" onclick="showShopScreen()"><span class="gb-icon">🛒</span> Shop</button>
+  </div>
+</div>
+
+<!-- CHARACTER SCREEN -->
+<div id="char-screen" style="display:none">
+  <div class="screen-header">
+    <h2>Select Character</h2>
+  </div>
+  
+  <div class="character-select">
+    <button class="char-nav" onclick="prevCharacter()">‹</button>
+    <div class="char-info">
+      <span id="char-name">Dino Boy</span>
+    </div>
+    <button class="char-nav" onclick="nextCharacter()">›</button>
+  </div>
+
+  <div class="screen-footer" style="gap: 16px;">
+    <button class="game-btn gb-amber" onclick="cancelCharScreen()">← BACK</button>
+    <button class="game-btn gb-green" onclick="hideCharScreen()">SELECT</button>
+  </div>
+</div>
+
+<!-- SHOP SCREEN -->
+<div id="shop-screen" style="display:none">
+  <div class="screen-header">
+    <h2>Power-Up Shop</h2>
+    <div class="lobby-stat lobby-coins-stat">🪙 <span id="shop-coins-display">0</span></div>
+  </div>
+  
+  <div class="shop-grid">
+    <div class="shop-card sc-shield">
+      <div class="shop-icon-wrap"><span>🛡️</span></div>
+      <div class="shop-details">
+        <h3>Shield</h3>
+        <p class="shop-desc">Absorbs one hit from obstacles</p>
+        <div class="shop-level"><span id="shop-lvl-shield">Lv.1</span> / 5</div>
+      </div>
+      <button class="shop-buy" id="shop-btn-shield" onclick="buyUpgrade('shield')">Upgrade<br><span>100</span> 🪙</button>
+    </div>
+    <div class="shop-card sc-magnet">
+      <div class="shop-icon-wrap"><span>🧲</span></div>
+      <div class="shop-details">
+        <h3>Magnet</h3>
+        <p class="shop-desc">Pull nearby coins towards you</p>
+        <div class="shop-level"><span id="shop-lvl-magnet">Lv.1</span> / 5</div>
+      </div>
+      <button class="shop-buy" id="shop-btn-magnet" onclick="buyUpgrade('magnet')">Upgrade<br><span>100</span> 🪙</button>
+    </div>
+    <div class="shop-card sc-speed">
+      <div class="shop-icon-wrap"><span>⚡</span></div>
+      <div class="shop-details">
+        <h3>Speed Boost</h3>
+        <p class="shop-desc">Run faster and score more</p>
+        <div class="shop-level"><span id="shop-lvl-speed">Lv.1</span> / 5</div>
+      </div>
+      <button class="shop-buy" id="shop-btn-speed" onclick="buyUpgrade('speed')">Upgrade<br><span>100</span> 🪙</button>
+    </div>
+    <div class="shop-card sc-gun">
+      <div class="shop-icon-wrap"><span>🔫</span></div>
+      <div class="shop-details">
+        <h3>Ammo</h3>
+        <p class="shop-desc">More bullets per pickup</p>
+        <div class="shop-level"><span id="shop-lvl-gun">Lv.1</span> / 5</div>
+      </div>
+      <button class="shop-buy" id="shop-btn-gun" onclick="buyUpgrade('gun')">Upgrade<br><span>100</span> 🪙</button>
+    </div>
+  </div>
+
+  <div class="screen-footer">
+    <button class="game-btn gb-amber" onclick="hideShopScreen()">← BACK</button>
+  </div>
+</div>
+
+<!-- GAME OVER -->
+<div id="gameover" style="display:none">
+  <div class="go-panel">
+    <h2>GAME OVER</h2>
+    <div class="go-divider"></div>
+    <div class="go-stats">
+      <div class="go-stat-item">
+        <span class="go-label">Score</span>
+        <span class="go-value" id="go-score">0</span>
+      </div>
+      <div class="go-stat-item">
+        <span class="go-label">Coins</span>
+        <span class="go-value go-coins-val" id="go-coins">0</span>
+      </div>
+      <div class="go-stat-item">
+        <span class="go-label">Best</span>
+        <span class="go-value go-best-val" id="go-best">0</span>
+      </div>
+    </div>
+    <div class="go-divider"></div>
+    <div class="btn-row">
+      <button class="game-btn gb-green" onclick="startGame()">Play Again</button>
+      <button class="game-btn gb-ghost" onclick="showMenu()">Menu</button>
+    </div>
+  </div>
+</div>
+
+<!-- PAUSE SCREEN -->
+<div id="pause-screen" style="display:none">
+  <div class="pause-panel">
+    <h2>PAUSED</h2>
+    <div class="go-divider"></div>
+    <div class="btn-row">
+      <button class="game-btn gb-green" onclick="togglePause()">▶ Resume</button>
+      <button class="game-btn gb-amber" onclick="startGame()">↻ Restart</button>
+      <button class="game-btn gb-ghost" onclick="quitToMenu()">Quit to Menu</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FBXLoader.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
