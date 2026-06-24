@@ -1,17 +1,17 @@
+import React from 'react';
 import { games } from '../data/games';
-import GameCard from '../components/GameCard';
 
 export default function Home() {
+  const game = games[0]; // Endless Runner
+
   return (
-    <div className="container">
-      <h1>Game Universe</h1>
-      <p>Select a game below to start playing instantly in your browser. No downloads, no data saved.</p>
-      
-      <div className="games-grid">
-        {games.map(game => (
-          <GameCard key={game.id} game={game} />
-        ))}
-      </div>
+    <div style={{ width: '100%', height: '100%', overflow: 'hidden', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: '#000', zIndex: 99999 }}>
+      <iframe 
+        src={game.path} 
+        title={game.title}
+        allow="fullscreen; autoplay"
+        style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+      ></iframe>
     </div>
   );
 }

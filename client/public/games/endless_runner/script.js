@@ -7,11 +7,20 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap; // softer, cheaper shadows
 renderer.setSize(window.innerWidth, window.innerHeight);
 
 window.addEventListener('resize', () => {
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  const aspect = window.innerWidth / window.innerHeight;
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  renderer.setSize(width, height);
+  const aspect = width / height;
   camera.aspect = aspect;
 
-  camera.fov = 70; // Always 70 to keep the old lobby style and gameplay perspective
+  // Responsive FOV scaling based on aspect ratio for perfect fullscreen viewing
+  if (aspect < 1) {
+    camera.fov = 80;
+  } else if (aspect > 2) {
+    camera.fov = 60;
+  } else {
+    camera.fov = 70;
+  }
 
   camera.updateProjectionMatrix();
 });
@@ -23,6 +32,367 @@ camera.lookAt(0, 1, -5);
 window.dispatchEvent(new Event('resize'));
 
 let playerGroup, leftArm, rightArm, leftLeg, rightLeg;
+
+// ─────────────────────────────────────────────
+//  SOUND SYSTEM (Asset-based with Web Audio Fallback)
+// ─────────────────────────────────────────────
+const sound = {
+  enabled: true,
+  sfxVolume: 0.7,
+  bgmVolume: 0.5,
+  ctx: null,
+  bgmInterval: null,
+  bgmStep: 0,
+  bgmAudio: null,
+  sfx: {},
+  files: {
+    bgm: 'assets/Background Music/Finish Line Arcade.mp3',
+    coin: 'assets/Sound/Coin Collect.mp3',
+    powerup: 'assets/Sound/Power Boost Collect.mp3',
+    run: 'assets/Sound/Run.mp3',
+    scoreUpgrade: 'assets/Sound/Score Level Upgrade.mp3',
+    tapToPlay: 'assets/Sound/Tap To Play.mp3',
+    button: 'assets/button.mp3',
+    buy: 'assets/Sound/Upgade Boost.mp3',
+    carComing1: 'assets/Sound/car coming.mp3',
+    jump: 'assets/jump.mp3',
+    slide: 'assets/slide.mp3',
+    shoot: 'assets/shoot.mp3',
+    hit: 'assets/hit.mp3',
+    shieldHit: 'assets/shieldHit.mp3',
+    gameOver: 'assets/gameover.mp3'
+  },
+
+  init() {
+    if (!this.ctx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        this.ctx = new AudioCtx();
+      }
+      // Pre-load HTML5 Audio objects
+      for (const [key, path] of Object.entries(this.files)) {
+        if (key === 'bgm') {
+          this.bgmAudio = new Audio(path);
+          this.bgmAudio.loop = true;
+        } else {
+          this.sfx[key] = new Audio(path);
+        }
+      }
+
+      // Add a global gesture listener to resume AudioContext cleanly upon first interaction
+      const resumeAudio = () => {
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(e => {});
+        }
+        window.removeEventListener('click', resumeAudio);
+        window.removeEventListener('touchstart', resumeAudio);
+      };
+      window.addEventListener('click', resumeAudio, { once: true });
+      window.addEventListener('touchstart', resumeAudio, { once: true });
+    }
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(e => {
+        // Suppress browser autoplay policy warning until user interacts with the page
+      });
+    }
+  },
+
+  toggle() {
+    this.enabled = !this.enabled;
+    const btn = document.getElementById('global-sound-btn');
+    if (btn) {
+      btn.textContent = this.enabled ? '🔊' : '🔇';
+    }
+    if (!this.enabled) {
+      this.stopBGM();
+    } else {
+      this.init();
+      if (gs.running && !isPaused) {
+        this.startBGM();
+      }
+    }
+  },
+
+  play(type) {
+    if (!this.enabled) return;
+    this.init();
+
+    // Attempt to play asset audio file first
+    if (this.sfx[type]) {
+      const audioClone = this.sfx[type].cloneNode();
+      if (type === 'coin') {
+        audioClone.volume = this.sfxVolume * 0.35; // Reduced volume for coin collection
+      } else if (type === 'carComing1') {
+        audioClone.volume = Math.min(1, this.sfxVolume * 1.15);
+      } else {
+        audioClone.volume = this.sfxVolume;
+      }
+      audioClone.play().catch(e => {
+        // Fallback to Web Audio API synthesis if file is missing in assets/
+        this.playSynth(type);
+      });
+    } else {
+      this.playSynth(type);
+    }
+  },
+
+  playSynth(type) {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    try {
+      if (type === 'jump') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(220, now);
+        osc.frequency.exponentialRampToValueAtTime(660, now + 0.15);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.15);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 0.15);
+      } else if (type === 'slide') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(350, now);
+        osc.frequency.linearRampToValueAtTime(100, now + 0.2);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 0.2);
+      } else if (type === 'coin') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(987.77, now); // B5
+        osc.frequency.setValueAtTime(1318.51, now + 0.08); // E6
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.linearRampToValueAtTime(0.2, now + 0.08);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 0.25);
+      } else if (type === 'powerup') {
+        const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+        notes.forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(freq, now + i * 0.1);
+          gain.gain.setValueAtTime(0, now + i * 0.1);
+          gain.gain.linearRampToValueAtTime(0.15, now + i * 0.1 + 0.02);
+          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.1 + 0.1);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(now + i * 0.1); osc.stop(now + i * 0.1 + 0.1);
+        });
+      } else if (type === 'shoot') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(1200, now);
+        osc.frequency.exponentialRampToValueAtTime(100, now + 0.12);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.12);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 0.12);
+      } else if (type === 'hit') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(150, now);
+        osc.frequency.linearRampToValueAtTime(40, now + 0.25);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 0.25);
+      } else if (type === 'shieldHit') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(600, now);
+        osc.frequency.exponentialRampToValueAtTime(150, now + 0.25);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 0.25);
+      } else if (type === 'gameOver') {
+        const notes = [659.25, 587.33, 523.25, 493.88, 392.00]; // E5, D5, C5, B4, G4
+        notes.forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, now + i * 0.18);
+          gain.gain.setValueAtTime(0, now + i * 0.18);
+          gain.gain.linearRampToValueAtTime(0.25, now + i * 0.18 + 0.03);
+          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.18 + 0.18);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(now + i * 0.18); osc.stop(now + i * 0.18 + 0.18);
+        });
+      } else if (type === 'button') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(500, now);
+        osc.frequency.exponentialRampToValueAtTime(800, now + 0.05);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.05);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 0.05);
+      } else if (type === 'buy') {
+        const notes = [523.25, 659.25, 783.99, 1046.50];
+        notes.forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + i * 0.08);
+          gain.gain.setValueAtTime(0, now + i * 0.08);
+          gain.gain.linearRampToValueAtTime(0.2, now + i * 0.08 + 0.02);
+          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.08 + 0.08);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(now + i * 0.08); osc.stop(now + i * 0.1 + 0.08);
+        });
+      } else if (type === 'scoreUpgrade') {
+        const notes = [523.25, 659.25, 783.99, 1046.50, 1318.51];
+        notes.forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(freq, now + i * 0.08);
+          gain.gain.setValueAtTime(0, now + i * 0.08);
+          gain.gain.linearRampToValueAtTime(0.2, now + i * 0.08 + 0.02);
+          gain.gain.linearRampToValueAtTime(0.01, now + i * 0.08 + 0.08);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(now + i * 0.08); osc.stop(now + i * 0.1 + 0.08);
+        });
+      } else if (type === 'run') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(150, now);
+        osc.frequency.exponentialRampToValueAtTime(400, now + 0.2);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 0.2);
+      } else if (type === 'carComing1') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(200, now);
+        osc.frequency.linearRampToValueAtTime(350, now + 0.3);
+        gain.gain.setValueAtTime(0.01, now);
+        gain.gain.linearRampToValueAtTime(0.2, now + 0.15);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 0.3);
+      }
+    } catch (e) { console.warn('Audio play error:', e); }
+  },
+
+  setBGMVolume(v) {
+    this.bgmVolume = v;
+    if (this.bgmAudio) this.bgmAudio.volume = v;
+  },
+
+  setSFXVolume(v) {
+    this.sfxVolume = v;
+  },
+
+  startBGM() {
+    if (!this.enabled) return;
+    this.init();
+    this.stopBGM();
+
+    if (this.bgmAudio) {
+      this.bgmAudio.volume = this.bgmVolume;
+      this.bgmAudio.play().catch(e => {
+        // Fallback to Web Audio API bassline loop if bgm.mp3 is missing
+        this.startBGMSynth();
+      });
+    } else {
+      this.startBGMSynth();
+    }
+  },
+
+  startBGMSynth() {
+    if (!this.ctx) return;
+    const notes = [130.81, 146.83, 164.81, 196.00, 130.81, 196.00, 164.81, 146.83]; // C3, D3, E3, G3 bassline loop
+    this.bgmStep = 0;
+
+    this.bgmInterval = setInterval(() => {
+      if (!this.enabled || !gs.running || isPaused) return;
+      try {
+        const ctx = this.ctx;
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(notes[this.bgmStep], now);
+        gain.gain.setValueAtTime(0.08, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.15);
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.start(now); osc.stop(now + 0.15);
+        this.bgmStep = (this.bgmStep + 1) % notes.length;
+      } catch (e) { }
+    }, 180);
+  },
+
+  stopBGM() {
+    if (this.bgmAudio && !this.bgmAudio.paused) {
+      this.bgmAudio.pause();
+      this.bgmAudio.currentTime = 0;
+    }
+    if (this.bgmInterval) {
+      clearInterval(this.bgmInterval);
+      this.bgmInterval = null;
+    }
+  },
+
+  pauseBGM() {
+    if (this.bgmAudio && !this.bgmAudio.paused) {
+      this.bgmAudio.pause();
+    }
+  },
+
+  resumeBGM() {
+    if (!this.enabled) return;
+    if (this.bgmAudio) {
+      this.bgmAudio.volume = this.bgmVolume;
+      this.bgmAudio.play().catch(e => {
+        if (!this.bgmInterval) this.startBGMSynth();
+      });
+    } else if (!this.bgmInterval) {
+      this.startBGMSynth();
+    }
+  }
+};
+
+window.toggleSound = function () {
+  sound.toggle();
+};
+window.updateBGMVolume = function (val) {
+  const v = val / 100;
+  sound.setBGMVolume(v);
+  const el = document.getElementById('bgm-val');
+  if (el) el.textContent = val + '%';
+};
+window.updateSFXVolume = function (val) {
+  const v = val / 100;
+  sound.setSFXVolume(v);
+  const el = document.getElementById('sfx-val');
+  if (el) el.textContent = val + '%';
+  sound.play('button');
+};
+window.showSettingsScreen = function () {
+  sound.play('button');
+  document.getElementById('overlay').style.display = 'none';
+  document.getElementById('settings-screen').style.display = 'flex';
+};
+window.hideSettingsScreen = function () {
+  sound.play('button');
+  document.getElementById('settings-screen').style.display = 'none';
+  document.getElementById('overlay').style.display = 'flex';
+};
 
 // ─────────────────────────────────────────────
 //  HIGH SCORE & COINS & UPGRADES
@@ -46,7 +416,186 @@ function getUpgradeMax(type) {
   return 0;
 }
 
+// ─────────────────────────────────────────────
+//  MISSIONS & SCORE MULTIPLIER
+// ─────────────────────────────────────────────
+function getScoreMultiplier() {
+  return parseInt(localStorage.getItem('er3d_mult') || '1');
+}
+function setScoreMultiplier(m) {
+  localStorage.setItem('er3d_mult', Math.min(30, m)); // Max x30 like Subway Surfers
+}
+function getMissionsTowardsNext() {
+  return parseInt(localStorage.getItem('er3d_missions_towards_next') || '0');
+}
+function setMissionsTowardsNext(n) {
+  localStorage.setItem('er3d_missions_towards_next', n);
+}
+
+function getNextMultRequiredMissions() {
+  const cur = getScoreMultiplier();
+  if (cur >= 30) return Infinity; // Max level reached
+  if (cur === 1 || cur === 2) return 1; // First 2 multiplier upgrades require 1 mission
+  if (cur >= 3 && cur <= 5) return 2; // Multiplier 3 to 5 require 2 missions
+  return 3; // Every multiplier after requires 3 missions
+}
+
+let activeMission = JSON.parse(localStorage.getItem('er3d_mission') || 'null');
+
+function generateMission() {
+  const missionTypes = [
+    { type: 'collect_coins', text: 'Collect {t} coins in one run', targets: [50, 75, 120, 150] },
+    { type: 'total_score', text: 'Reach {t} score in one run', targets: [3000, 5000, 7500, 10000] },
+    { type: 'jump_count', text: 'Jump {t} times in one run', targets: [25, 40, 60, 80] },
+    { type: 'slide_count', text: 'Slide {t} times in one run', targets: [25, 40, 60, 80] },
+    { type: 'pick_powerups', text: 'Pick up {t} power-ups in one run', targets: [4, 6, 8, 10] },
+    { type: 'shoot_obstacles', text: 'Destroy {t} obstacles with gun', targets: [10, 15, 20, 25] }
+  ];
+  const template = missionTypes[Math.floor(Math.random() * missionTypes.length)];
+  const target = template.targets[Math.floor(Math.random() * template.targets.length)];
+  activeMission = {
+    type: template.type,
+    text: template.text.replace('{t}', target),
+    target: target,
+    progress: 0
+  };
+  localStorage.setItem('er3d_mission', JSON.stringify(activeMission));
+}
+
+if (!activeMission) generateMission();
+
+function updateMissionLobbyUI() {
+  const cur = getScoreMultiplier();
+  const req = getNextMultRequiredMissions();
+  const prog = getMissionsTowardsNext();
+
+  // ─── HUD Multiplier Badge ───
+  const hudBadge = document.getElementById('hud-mult-badge');
+  if (hudBadge) hudBadge.textContent = `⚡ x${cur}`;
+
+  // ─── Pause screen ───
+  const pauseMult = document.getElementById('pause-mult');
+  const pauseText = document.getElementById('pause-mission-text');
+  const pauseProg = document.getElementById('pause-mult-progress');
+  if (pauseMult) pauseMult.textContent = `⚡ x${cur}`;
+  if (pauseText && activeMission) pauseText.textContent = `${activeMission.text} (${activeMission.progress}/${activeMission.target})`;
+  if (pauseProg) {
+    if (cur >= 30) pauseProg.textContent = 'Maximum Multiplier Reached! 🔥';
+    else pauseProg.textContent = `${req - prog} more mission${req - prog > 1 ? 's' : ''} to reach x${cur + 1}`;
+  }
+
+  // ─── Mission GUI screen ───
+  const guiMult = document.getElementById('gui-mult-display');
+  const guiReq = document.getElementById('gui-mult-req');
+  const guiText = document.getElementById('gui-mission-text');
+  if (guiMult) guiMult.textContent = `x${cur}`;
+  if (guiReq) {
+    if (cur >= 30) guiReq.textContent = '🔥 MAX MULTIPLIER REACHED!';
+    else guiReq.textContent = `${req - prog} mission${req - prog > 1 ? 's' : ''} away from x${cur + 1}   (${prog}/${req})`;
+  }
+  if (guiText && activeMission) guiText.textContent = `${activeMission.text} (${activeMission.progress}/${activeMission.target})`;
+
+  // ─── Multiplier progress dots ───
+  const dotsContainer = document.getElementById('mult-dots');
+  if (dotsContainer) {
+    const dotCount = req === Infinity ? 3 : req;
+    dotsContainer.innerHTML = '';
+    for (let i = 0; i < Math.min(dotCount, 5); i++) {
+      const d = document.createElement('div');
+      d.className = 'mult-dot' + (i < prog ? ' done' : '');
+      dotsContainer.appendChild(d);
+    }
+  }
+}
+
+// Track run progress
+let runProgress = {
+  collect_coins: 0,
+  total_score: 0,
+  jump_count: 0,
+  slide_count: 0,
+  pick_powerups: 0,
+  shoot_obstacles: 0
+};
+
+function resetRunProgress() {
+  runProgress = {
+    collect_coins: 0,
+    total_score: 0,
+    jump_count: 0,
+    slide_count: 0,
+    pick_powerups: 0,
+    shoot_obstacles: 0
+  };
+  if (activeMission) {
+    activeMission.progress = 0;
+    localStorage.setItem('er3d_mission', JSON.stringify(activeMission));
+  }
+}
+
+function addMissionProgress(type, amount = 1) {
+  if (!gs.running || isPaused || !activeMission) return;
+  if (activeMission.type === type) {
+    if (type === 'total_score') {
+      runProgress[type] = amount;
+      activeMission.progress = Math.floor(amount);
+    } else {
+      runProgress[type] += amount;
+      activeMission.progress = runProgress[type];
+    }
+
+    if (activeMission.progress >= activeMission.target) {
+      activeMission.progress = activeMission.target;
+      completeMission();
+    }
+    localStorage.setItem('er3d_mission', JSON.stringify(activeMission));
+  }
+}
+
+function completeMission() {
+  const cur = getScoreMultiplier();
+  const req = getNextMultRequiredMissions();
+  let prog = getMissionsTowardsNext() + 1;
+  let multUpgraded = false;
+  let newMult = cur;
+
+  if (cur < 30 && prog >= req) {
+    newMult = cur + 1;
+    setScoreMultiplier(newMult);
+    prog = 0;
+    multUpgraded = true;
+  }
+  setMissionsTowardsNext(prog);
+  if (multUpgraded) sound.play('scoreUpgrade'); else sound.play('powerup');
+
+  // Show Toast
+  const toast = document.getElementById('mission-toast');
+  const toastDesc = document.getElementById('toast-desc');
+  if (toast && toastDesc) {
+    if (multUpgraded) {
+      toastDesc.textContent = `Score Multiplier Increased to x${newMult}!`;
+    } else {
+      const nextReq = getNextMultRequiredMissions();
+      toastDesc.textContent = `Mission Complete! (${prog}/${nextReq} towards x${newMult + 1})`;
+    }
+    toast.style.display = 'flex';
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transition = 'opacity 0.5s';
+      setTimeout(() => { toast.style.display = 'none'; toast.style.opacity = '1'; }, 500);
+    }, 3000);
+  }
+
+  // Generate next mission
+  generateMission();
+  // Reset run progress for the new mission so they can complete multiple per run!
+  runProgress[activeMission.type] = 0;
+  updateMissionLobbyUI();
+  _uiDirty = true;
+}
+
 window.showMenu = function () {
+  sound.play('tapToPlay');
   scene.background = null;
   if (typeof skylineLeft !== 'undefined') skylineLeft.visible = false;
   if (typeof skylineRight !== 'undefined') skylineRight.visible = false;
@@ -54,25 +603,42 @@ window.showMenu = function () {
   document.getElementById('char-screen').style.display = 'none';
   const shop = document.getElementById('shop-screen');
   if (shop) shop.style.display = 'none';
+  const missionScreen = document.getElementById('mission-screen');
+  if (missionScreen) missionScreen.style.display = 'none';
   const pause = document.getElementById('pause-screen');
   if (pause) pause.style.display = 'none';
   document.getElementById('overlay').style.display = 'flex';
   document.getElementById('ui').style.display = 'none'; // Hide HUD in menu
   document.getElementById('lobby-score').innerHTML = '<span class="stat-icon">🏆</span> <span>Best: ' + getHS() + '</span>';
-  document.getElementById('lobby-coins').innerHTML = '<span class="stat-icon">🪙</span> <span>' + getTotalCoins() + '</span>';
+  document.getElementById('lobby-coins').innerHTML = '<span class="stat-icon">💰</span> <span>' + getTotalCoins() + '</span>';
   gs.running = false;
   inShowcase = false;
   window.dispatchEvent(new Event('resize')); // update menu FOV
+  updateMissionLobbyUI();
+}
+
+window.showMissionScreen = function () {
+  sound.play('button');
+  document.getElementById('overlay').style.display = 'none';
+  document.getElementById('mission-screen').style.display = 'flex';
+  updateMissionLobbyUI();
+}
+window.hideMissionScreen = function () {
+  sound.play('button');
+  document.getElementById('mission-screen').style.display = 'none';
+  document.getElementById('overlay').style.display = 'flex';
+  updateMissionLobbyUI();
 }
 
 let inShowcase = false;
-let savedCharacterIdx = 0;
 
 window.showCharScreen = function () {
-  savedCharacterIdx = selectedCharacterIdx;
+  sound.play('button');
+  viewingCharacterIdx = selectedCharacterIdx;
   document.getElementById('overlay').style.display = 'none';
   document.getElementById('char-screen').style.display = 'flex';
   inShowcase = true;
+  updateSelectedCharacter();
 
   if (player) {
     player.position.set(100, 0, 100);
@@ -85,9 +651,15 @@ window.showCharScreen = function () {
 }
 
 window.hideCharScreen = function () {
+  sound.play('button');
+  if (playableCharacters[viewingCharacterIdx].unlocked) {
+    selectedCharacterIdx = viewingCharacterIdx;
+    localStorage.setItem('selected_char_idx', selectedCharacterIdx);
+  }
   document.getElementById('char-screen').style.display = 'none';
   document.getElementById('overlay').style.display = 'flex';
   inShowcase = false;
+  updateSelectedCharacter();
 
   if (player) {
     player.position.set(0, 0, 3);
@@ -100,21 +672,35 @@ window.hideCharScreen = function () {
 }
 
 window.cancelCharScreen = function () {
-  selectedCharacterIdx = savedCharacterIdx;
+  sound.play('button');
+  viewingCharacterIdx = selectedCharacterIdx;
+  document.getElementById('char-screen').style.display = 'none';
+  document.getElementById('overlay').style.display = 'flex';
+  inShowcase = false;
   updateSelectedCharacter();
-  hideCharScreen();
+
+  if (player) {
+    player.position.set(0, 0, 3);
+    player.rotation.set(0, 0, 0);
+  }
+
+  // Snap camera back to lobby
+  currentCamPos.set(1, 2, 6);
+  currentCamLook.set(0, 1.5, 0);
 }
 
 window.showShopScreen = function () {
+  sound.play('button');
   document.getElementById('overlay').style.display = 'none';
   document.getElementById('shop-screen').style.display = 'flex';
   if (window.updateShopUI) window.updateShopUI();
 }
 
 window.hideShopScreen = function () {
+  sound.play('button');
   document.getElementById('shop-screen').style.display = 'none';
   document.getElementById('overlay').style.display = 'flex';
-  document.getElementById('lobby-coins').innerHTML = '<span class="stat-icon">🪙</span> <span>' + getTotalCoins() + '</span>';
+  document.getElementById('lobby-coins').innerHTML = '<span class="stat-icon">💰</span> <span>' + getTotalCoins() + '</span>';
 }
 
 window.updateShopUI = function () {
@@ -123,15 +709,27 @@ window.updateShopUI = function () {
   const ups = getUpgrades();
   ['shield', 'magnet', 'speed', 'gun'].forEach(type => {
     const lvl = ups[type] || 1;
-    const cost = lvl * 100;
-    document.getElementById(`shop-lvl-${type}`).textContent = `Lv.${lvl}`;
+    const cost = [0, 500, 1500, 3000, 6000][lvl];
+    const lvlEl = document.getElementById(`shop-lvl-${type}`);
+    if (lvlEl) lvlEl.textContent = `Lv.${lvl}`;
+
+    // Update dot indicators
+    const dotsEl = document.getElementById(`shop-dots-${type}`);
+    if (dotsEl) {
+      dotsEl.querySelectorAll('.shop-lvl-dot').forEach((dot, i) => {
+        dot.classList.toggle('filled', i < lvl);
+      });
+    }
+
     const btn = document.getElementById(`shop-btn-${type}`);
-    if (lvl >= 5) {
-      btn.innerHTML = `MAX LEVEL`;
-      btn.classList.add('disabled');
-    } else {
-      btn.innerHTML = `Upgrade<br><span>${cost}</span> 🪙`;
-      btn.classList.remove('disabled');
+    if (btn) {
+      if (lvl >= 5) {
+        btn.innerHTML = `MAX`;
+        btn.classList.add('disabled');
+      } else {
+        btn.innerHTML = `Upgrade<span>${cost} 💰</span>`;
+        btn.classList.remove('disabled');
+      }
     }
   });
 }
@@ -140,18 +738,28 @@ window.buyUpgrade = function (type) {
   const ups = getUpgrades();
   const lvl = ups[type] || 1;
   if (lvl >= 5) return;
-  const cost = lvl * 100;
+  const cost = [0, 500, 1500, 3000, 6000][lvl];
   const total = getTotalCoins();
   if (total >= cost) {
+    sound.play('buy');
     addTotalCoins(-cost);
     ups[type] = lvl + 1;
     saveUpgrades(ups);
     updateShopUI();
-    document.getElementById('lobby-coins').innerHTML = '<span class="stat-icon">🪙</span> <span>' + getTotalCoins() + '</span>';
+    document.getElementById('lobby-coins').innerHTML = '<span class="stat-icon">💰</span> <span>' + getTotalCoins() + '</span>';
   } else {
-    alert("Not enough coins!");
+    sound.play('hit');
+    // Shake the button instead of alert
+    const btn = document.getElementById(`shop-btn-${type}`);
+    if (btn) {
+      btn.style.animation = 'none';
+      btn.offsetHeight; // reflow
+      btn.style.animation = 'shopShake 0.4s ease';
+      setTimeout(() => { btn.style.animation = ''; }, 400);
+    }
   }
 }
+
 
 // ─────────────────────────────────────────────
 //  DIMENSIONS
@@ -322,10 +930,12 @@ let boyActions = null;
 let currentAnim = null;
 
 let playableCharacters = [
-  { name: 'Dino Boy', file: 'Character/boy1/idle.fbx', animFolder: 'Character/boy1', scale: 0.008, tex: 'Character/boy1/material_baseColor.png', model: null, mixer: null, actions: null, capitalizeAnim: false },
-  { name: 'Dino Boy 2', file: 'Character/boy2/Idle.fbx', animFolder: 'Character/boy2', scale: 0.1, tex: 'Character/boy2/tex_0.png', model: null, mixer: null, actions: null, capitalizeAnim: true },
+  { name: 'Dino Boy', file: 'Character/boy1/idle.fbx', animFolder: 'Character/boy1', scale: 0.0055, tex: 'Character/boy1/texture.png', model: null, mixer: null, actions: null, capitalizeAnim: false, price: 0, unlocked: true },
+  { name: 'Dino Boy 2', file: 'Character/boy2/Idle.fbx', animFolder: 'Character/boy2', scale: 0.065, tex: 'Character/boy2/tex_0.png', model: null, mixer: null, actions: null, capitalizeAnim: true, price: 10000, unlocked: localStorage.getItem('char_unlocked_1') === 'true' },
+  { name: 'Bugs Bunny', file: 'Character/Bug Bunny/Idle.fbx', animFolder: 'Character/Bug Bunny', scale: 0.018, tex: 'Character/Bug Bunny/texture.png', model: null, mixer: null, actions: null, capitalizeAnim: true, price: 20000, unlocked: localStorage.getItem('char_unlocked_2') === 'true' },
 ];
-let selectedCharacterIdx = 0;
+let selectedCharacterIdx = parseInt(localStorage.getItem('selected_char_idx')) || 0;
+let viewingCharacterIdx = selectedCharacterIdx;
 
 window.crossfadeAnim = function (animName) {
   if (!boyActions || !boyMixer) return;
@@ -342,23 +952,90 @@ window.crossfadeAnim = function (animName) {
 };
 
 window.updateSelectedCharacter = function () {
-  const char = playableCharacters[selectedCharacterIdx];
+  const idx = inShowcase ? viewingCharacterIdx : selectedCharacterIdx;
+  const char = playableCharacters[idx];
   boyModel = char.model;
   boyMixer = char.mixer;
   boyActions = char.actions;
   currentAnim = null; // reset state
   if (boyActions) crossfadeAnim('idle');
-  document.getElementById('char-name').textContent = char.name;
+  
+  const charNameEl = document.getElementById('char-name');
+  if (charNameEl) charNameEl.textContent = char.name;
+
+  const charImage = document.getElementById('char-image');
+  if (charImage) {
+    charImage.src = idx === 0 ? 'images/dino1.png' : (idx === 1 ? 'images/dino2.png' : 'images/bug_bunny.png');
+  }
+
   if (!gs.running && char.model) buildPlayer(0);
+
+  if (inShowcase) {
+    const coinsDisp = document.getElementById('char-coins-display');
+    if (coinsDisp) coinsDisp.textContent = getTotalCoins();
+
+    const statusBadge = document.getElementById('char-status-badge');
+    const selectBtn = document.getElementById('char-select-btn');
+    const buyBtn = document.getElementById('char-buy-btn');
+
+    if (char.unlocked) {
+      if (buyBtn) buyBtn.style.display = 'none';
+      if (selectBtn) {
+        selectBtn.style.display = 'inline-block';
+        if (idx === selectedCharacterIdx) {
+          selectBtn.textContent = 'EQUIPPED';
+          selectBtn.disabled = true;
+          selectBtn.style.opacity = '0.6';
+          if (statusBadge) { statusBadge.textContent = 'Active'; statusBadge.style.background = 'rgba(46, 125, 50, 0.8)'; }
+        } else {
+          selectBtn.textContent = 'SELECT';
+          selectBtn.disabled = false;
+          selectBtn.style.opacity = '1';
+          if (statusBadge) { statusBadge.textContent = 'Unlocked'; statusBadge.style.background = 'rgba(0, 0, 0, 0.4)'; }
+        }
+      }
+    } else {
+      if (selectBtn) selectBtn.style.display = 'none';
+      if (buyBtn) {
+        buyBtn.style.display = 'inline-block';
+        const priceVal = document.getElementById('char-price-val');
+        if (priceVal) priceVal.textContent = char.price;
+        if (statusBadge) { statusBadge.textContent = 'Locked'; statusBadge.style.background = 'rgba(183, 28, 28, 0.8)'; }
+      }
+    }
+  }
+};
+
+window.buyCharacter = function () {
+  const char = playableCharacters[viewingCharacterIdx];
+  if (char.unlocked) return;
+  const total = getTotalCoins();
+  if (total >= char.price) {
+    addTotalCoins(-char.price);
+    char.unlocked = true;
+    localStorage.setItem('char_unlocked_' + viewingCharacterIdx, 'true');
+    sound.play('buy');
+    updateSelectedCharacter();
+    document.getElementById('lobby-coins').innerHTML = '<span class="stat-icon">💰</span> <span>' + getTotalCoins() + '</span>';
+    _uiDirty = true;
+  } else {
+    sound.play('hit');
+    const buyBtn = document.getElementById('char-buy-btn');
+    if (buyBtn) {
+      buyBtn.style.transform = 'scale(0.95)';
+      buyBtn.style.transition = 'transform 0.1s ease';
+      setTimeout(() => { buyBtn.style.transform = 'none'; }, 100);
+    }
+  }
 };
 
 window.nextCharacter = function () {
-  selectedCharacterIdx = (selectedCharacterIdx + 1) % playableCharacters.length;
+  viewingCharacterIdx = (viewingCharacterIdx + 1) % playableCharacters.length;
   updateSelectedCharacter();
 };
 
 window.prevCharacter = function () {
-  selectedCharacterIdx = (selectedCharacterIdx - 1 + playableCharacters.length) % playableCharacters.length;
+  viewingCharacterIdx = (viewingCharacterIdx - 1 + playableCharacters.length) % playableCharacters.length;
   updateSelectedCharacter();
 };
 
@@ -393,7 +1070,11 @@ playableCharacters.forEach((char, index) => {
       object.scale.setScalar(char.scale);
       object.rotation.y = Math.PI;
       let tex = null;
-      if (char.tex) { tex = texLoader.load('models/' + char.tex); tex.flipY = false; }
+      if (char.tex) {
+        tex = texLoader.load('models/' + char.tex);
+        tex.flipY = false;
+        if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+      }
       object.traverse(child => {
         if (child.isMesh) {
           child.castShadow = true; child.receiveShadow = true;
@@ -412,6 +1093,38 @@ playableCharacters.forEach((char, index) => {
           child.visible = false;
         }
       });
+
+      if (char.glbTex) {
+        gltfLoader.load('models/' + char.glbTex, (gltf) => {
+          const texMap = {};
+          let fallbackTex = null;
+          gltf.scene.traverse(c => {
+            if (c.isMesh && c.material && c.material.map) {
+              const origTex = c.material.map;
+              const newTex = origTex.clone();
+              newTex.flipY = false; // Match standard Mixamo/FBX UV orientation
+              if (THREE.SRGBColorSpace) newTex.colorSpace = THREE.SRGBColorSpace;
+              newTex.needsUpdate = true;
+              texMap[c.name] = newTex;
+              if (c.material.name) texMap[c.material.name] = newTex;
+              fallbackTex = newTex;
+            }
+          });
+          if (fallbackTex) {
+            object.traverse(child => {
+              if (child.isMesh && child.material) {
+                let matchTex = texMap[child.name] || (child.material.name && texMap[child.material.name]) || fallbackTex;
+                child.material.map = matchTex;
+                if (child.material.color) child.material.color.setHex(0xffffff); // Reset dark/tinted base color
+                child.material.transparent = false;
+                child.material.opacity = 1;
+                child.material.depthWrite = true;
+                child.material.needsUpdate = true;
+              }
+            });
+          }
+        });
+      }
       char.model = object;
       char.mixer = new THREE.AnimationMixer(object);
       char.actions = {};
@@ -513,6 +1226,13 @@ modelsToLoad.forEach(info => {
       if (child.isMesh) {
         child.castShadow = true; child.receiveShadow = true;
         if (child.material && tex) { child.material.map = tex; child.material.needsUpdate = true; }
+
+        // Increase roughness on mini_truck to eliminate glossy shine
+        if (info.name === 'mini_truck' && child.material) {
+          child.material.roughness = 0.9;
+          child.material.metalness = 0.1;
+          child.material.needsUpdate = true;
+        }
 
         // Fix faded color on plainTree1
         if (info.name === 'plainTree1' && child.material) {
@@ -1153,6 +1873,7 @@ const _bulletMat = new THREE.MeshLambertMaterial({ color: 0xEF9F27 });
 function shoot() {
   if (!gs.running || !player || gs.ammo <= 0) return;
   gs.ammo--;
+  sound.play('shoot');
   if (gs.ammo <= 0 && gun) gun.visible = false;
   _uiDirty = true;
   const b = new THREE.Mesh(_bulletGeo, _bulletMat);
@@ -1197,27 +1918,99 @@ function spawnParticles(x, y, z, color) {
 }
 
 // ─────────────────────────────────────────────
-//  UI – only re-render when dirty
+//  BOOST RING SYSTEM — Circular SVG timer HUD
 // ─────────────────────────────────────────────
-let _uiDirty = true;
-function markUIDirty() { _uiDirty = true; }
+const CIRC = 138.23; // 2π × r=22
+
+/**
+ * updateBoostRing(id, ringId, timeId, current, max)
+ *  - id:      DOM id of the .boost-ring wrapper  (e.g. 'pu-shield')
+ *  - ringId:  DOM id of the <circle.boost-progress> (e.g. 'ring-shield')
+ *  - timeId:  DOM id of the .boost-time span (e.g. 'time-shield')
+ *  - current: current frames remaining (gs.shield etc.)
+ *  - max:     max frames for this boost type
+ *  - isAmmo:  true when value is discrete ammo count (gun)
+ */
+function updateBoostRing(id, ringId, timeId, current, max, isAmmo) {
+  const wrapper = document.getElementById(id);
+  const ring = document.getElementById(ringId);
+  const label = document.getElementById(timeId);
+  if (!wrapper || !ring || !label) return;
+
+  const wasActive = wrapper.style.display !== 'none';
+  const isActive = current > 0;
+
+  if (!isActive) {
+    if (wasActive) {
+      // Expire animation then hide
+      wrapper.style.animation = 'boostExpire 0.35s ease forwards';
+      setTimeout(() => {
+        wrapper.style.display = 'none';
+        wrapper.style.animation = '';
+        wrapper.className = 'boost-ring';
+      }, 340);
+    }
+    return;
+  }
+
+  // Show with pop-in if just became active
+  if (!wasActive) {
+    wrapper.style.display = 'block';
+    wrapper.style.animation = 'boostPopIn 0.45s cubic-bezier(0.175,0.885,0.32,1.275) forwards';
+  }
+
+  // Progress ring — dashoffset 0 = full, CIRC = empty
+  const ratio = isAmmo ? Math.min(current / max, 1) : current / max;
+  const offset = CIRC * (1 - ratio);
+  ring.style.strokeDashoffset = offset.toFixed(2);
+
+  // Time label
+  if (isAmmo) {
+    label.textContent = current;
+  } else {
+    const secs = (current / 60).toFixed(1);
+    label.textContent = secs;
+  }
+
+  // State class → drives ring colour + pulse animation
+  const pct = ratio * 100;
+  let state = 'state-full';
+  if (pct < 15) state = 'state-critical';
+  else if (pct < 30) state = 'state-low';
+  else if (pct < 60) state = 'state-running';
+
+  wrapper.className = 'boost-ring ' + state;
+}
 
 function updateUI() {
   if (!_uiDirty) return;
   _uiDirty = false;
-  document.getElementById('score-box').innerHTML = '<span class="hud-icon">⭐</span> <span>' + Math.floor(gs.score) + '</span>';
-  document.getElementById('coin-box').innerHTML = '<span class="hud-icon">🪙</span> <span>' + gs.coins + '</span>';
-  const h = ['💀', '❤️', '❤️❤️', '❤️❤️❤️'];
-  document.getElementById('lives-box').textContent = h[Math.max(0, Math.min(3, gs.lives))];
-  document.getElementById('pu-shield').classList.toggle('active', gs.shield > 0);
-  if (gs.shield > 0) document.getElementById('pu-shield').style.setProperty('--p', (gs.shield / getUpgradeMax('shield') * 100) + '%');
-  document.getElementById('pu-magnet').classList.toggle('active', gs.magnet > 0);
-  if (gs.magnet > 0) document.getElementById('pu-magnet').style.setProperty('--p', (gs.magnet / getUpgradeMax('magnet') * 100) + '%');
-  document.getElementById('pu-speed').classList.toggle('active', gs.speedBoost > 0);
-  if (gs.speedBoost > 0) document.getElementById('pu-speed').style.setProperty('--p', (gs.speedBoost / getUpgradeMax('speed') * 100) + '%');
-  document.getElementById('pu-gun').classList.toggle('active', gs.ammo > 0);
-  if (gs.ammo > 0) document.getElementById('pu-gun').innerHTML = '<span class="pu-icon">🔫</span> ' + gs.ammo;
+
+  // ── Score & coin HUD ──
+  document.getElementById('score-box').innerHTML =
+    '<span class="hud-icon">⭐</span> <span>' + Math.floor(gs.score) + '</span>';
+  document.getElementById('coin-box').innerHTML =
+    '<span class="hud-icon">💰</span> <span>' + gs.coins + '</span>';
+
+  // ── Lives ──
+  document.getElementById('lives-box').textContent = gs.lives <= 0 ? '💀 0' : '❤️ ' + gs.lives;
+
+  // ── Multiplier badge ──
+  const mb = document.getElementById('hud-mult-badge');
+  if (mb) mb.textContent = '⚡ x' + getScoreMultiplier();
+
+  // ── Boost rings ──
+  const maxShield = getUpgradeMax('shield');
+  const maxMagnet = getUpgradeMax('magnet');
+  const maxSpeed = getUpgradeMax('speed');
+  const maxGun = getUpgradeMax('gun') * 5; // ammo cap reference
+
+  updateBoostRing('pu-shield', 'ring-shield', 'time-shield', gs.shield, maxShield, false);
+  updateBoostRing('pu-magnet', 'ring-magnet', 'time-magnet', gs.magnet, maxMagnet, false);
+  updateBoostRing('pu-speed', 'ring-speed', 'time-speed', gs.speedBoost, maxSpeed, false);
+  updateBoostRing('pu-gun', 'ring-gun', 'time-gun', gs.ammo, maxGun, true);
 }
+
 
 // Mark UI dirty every 20 frames for score counter (not every frame)
 let _uiScoreCounter = 0;
@@ -1226,6 +2019,8 @@ let _uiScoreCounter = 0;
 //  GAME FLOW
 // ─────────────────────────────────────────────
 window.startGame = function startGame() {
+  sound.play('run');
+  sound.startBGM();
   if (typeof skylineLeft !== 'undefined') skylineLeft.visible = true;
   if (typeof skylineRight !== 'undefined') skylineRight.visible = true;
   document.getElementById('overlay').style.display = 'none';
@@ -1243,6 +2038,7 @@ window.startGame = function startGame() {
   targetSkylineColor = new THREE.Color(dim.skyline);
   targetAmbInt = dim.ambInt;
   resetState();
+  if (window.resetRunProgress) resetRunProgress();
   buildPlayer(0);
   buildChaser();
   initTiles();
@@ -1268,6 +2064,8 @@ window.startGame = function startGame() {
 }
 
 function gameOver() {
+  sound.stopBGM();
+  sound.play('gameOver');
   scene.background = null;
   if (typeof skylineLeft !== 'undefined') skylineLeft.visible = false;
   if (typeof skylineRight !== 'undefined') skylineRight.visible = false;
@@ -1275,7 +2073,7 @@ function gameOver() {
   setHS(gs.score);
   addTotalCoins(gs.coins);
   document.getElementById('go-score').textContent = Math.floor(gs.score);
-  document.getElementById('go-coins').textContent = '🪙 ' + gs.coins;
+  document.getElementById('go-coins').textContent = '💰 ' + gs.coins;
   document.getElementById('go-best').textContent = getHS();
   document.getElementById('gameover').style.display = 'flex';
   snowParticles.forEach(p => scene.remove(p));
@@ -1291,16 +2089,23 @@ document.addEventListener('keydown', e => {
   const preventKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'];
   if (preventKeys.includes(e.code)) e.preventDefault();
 
-  if (e.code === 'ArrowLeft' || e.code === 'KeyA') { if (gs.lane > 0) { gs.lane--; gs.targetX = LANES[gs.lane]; } }
-  if (e.code === 'ArrowRight' || e.code === 'KeyD') { if (gs.lane < 2) { gs.lane++; gs.targetX = LANES[gs.lane]; } }
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') { if (gs.lane > 0) { gs.lane--; gs.targetX = LANES[gs.lane]; sound.play('button'); } }
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') { if (gs.lane < 2) { gs.lane++; gs.targetX = LANES[gs.lane]; sound.play('button'); } }
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
-    if (gs.onGround || gs.isSliding) { gs.isSliding = false; gs.vy = 0.22; gs.onGround = false; }
+    if (gs.onGround || gs.isSliding) { gs.isSliding = false; gs.vy = 0.22; gs.onGround = false; sound.play('jump'); if (window.addMissionProgress) addMissionProgress('jump_count', 1); }
   }
   if (e.code === 'ArrowDown' || e.code === 'KeyS') {
-    if (gs.onGround) { gs.isSliding = true; gs.slideTimer = 40; }
-    else { gs.isSliding = true; gs.slideTimer = 40; gs.vy = -0.3; }
+    if (!gs.isSliding) {
+      if (gs.onGround) { gs.isSliding = true; gs.slideTimer = 40; sound.play('slide'); if (window.addMissionProgress) addMissionProgress('slide_count', 1); }
+      else { gs.isSliding = true; gs.slideTimer = 40; gs.vy = -0.3; sound.play('slide'); if (window.addMissionProgress) addMissionProgress('slide_count', 1); }
+    }
   }
   if (e.code === 'KeyZ') shoot();
+});
+
+canvas.addEventListener('mousedown', e => {
+  if (!gs.running || isPaused) return;
+  if (e.button === 0) shoot(); // Left mouse button
 });
 
 // Global swipe controls
@@ -1321,19 +2126,21 @@ document.addEventListener('touchmove', e => {
   const touchY = e.touches[0].clientY;
   const dx = touchX - touchStartX;
   const dy = touchY - touchStartY;
-  
+
   if (Math.abs(dx) > 40 || Math.abs(dy) > 40) {
     swipeHandled = true; // Lock until next touch
     if (Math.abs(dx) > Math.abs(dy)) {
-      if (dx > 0) { if (gs.lane < 2) { gs.lane++; gs.targetX = LANES[gs.lane]; } }
-      else { if (gs.lane > 0) { gs.lane--; gs.targetX = LANES[gs.lane]; } }
+      if (dx > 0) { if (gs.lane < 2) { gs.lane++; gs.targetX = LANES[gs.lane]; sound.play('button'); } }
+      else { if (gs.lane > 0) { gs.lane--; gs.targetX = LANES[gs.lane]; sound.play('button'); } }
     } else {
-      if (dy > 0) { 
-        if (gs.onGround) { gs.isSliding = true; gs.slideTimer = 40; }
-        else { gs.isSliding = true; gs.slideTimer = 40; gs.vy = -0.3; }
+      if (dy > 0) {
+        if (!gs.isSliding) {
+          if (gs.onGround) { gs.isSliding = true; gs.slideTimer = 40; sound.play('slide'); if (window.addMissionProgress) addMissionProgress('slide_count', 1); }
+          else { gs.isSliding = true; gs.slideTimer = 40; gs.vy = -0.3; sound.play('slide'); if (window.addMissionProgress) addMissionProgress('slide_count', 1); }
+        }
       }
-      else { 
-        if (gs.onGround || gs.isSliding) { gs.isSliding = false; gs.vy = 0.22; gs.onGround = false; }
+      else {
+        if (gs.onGround || gs.isSliding) { gs.isSliding = false; gs.vy = 0.22; gs.onGround = false; sound.play('jump'); if (window.addMissionProgress) addMissionProgress('jump_count', 1); }
       }
     }
   }
@@ -1345,7 +2152,7 @@ document.addEventListener('touchend', e => {
   const touchEndY = e.changedTouches[0].clientY;
   const dx = touchEndX - touchStartX;
   const dy = touchEndY - touchStartY;
-  
+
   if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && e.target.tagName === 'CANVAS') {
     shoot();
   }
@@ -1357,22 +2164,35 @@ let isPaused = false;
 window.togglePause = function () {
   if (!gs.running || document.getElementById('gameover').style.display === 'flex') return;
   isPaused = !isPaused;
+  sound.play('button');
+  if (isPaused) sound.pauseBGM(); else sound.resumeBGM();
+  if (isPaused && window.updateMissionLobbyUI) updateMissionLobbyUI();
   document.getElementById('pause-screen').style.display = isPaused ? 'flex' : 'none';
 };
 window.quitToMenu = function () {
   isPaused = false;
+  sound.stopBGM();
+  sound.play('button');
   document.getElementById('pause-screen').style.display = 'none';
   gameOver(); showMenu();
 };
 
-window.toggleFullScreen = function() {
+window.toggleFullScreen = function () {
   if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen().catch(err => {
+    document.documentElement.requestFullscreen().then(() => {
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 250);
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 500);
+    }).catch(err => {
       console.log(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
     });
   } else {
     if (document.exitFullscreen) {
-      document.exitFullscreen();
+      document.exitFullscreen().then(() => {
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 100);
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 250);
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 500);
+      });
     }
   }
 };
@@ -1434,8 +2254,9 @@ function animate() {
 
   // ── Speed & score
   const spd = gs.speedBoost > 0 ? gs.speed * 1.6 : gs.speed;
-  gs.score += spd * 2.2;
+  gs.score += spd * 2.2 * getScoreMultiplier();
   gs.speed = 0.2 + 0.6 * (1 - Math.exp(-gs.score / 5000));
+  if (window.addMissionProgress) addMissionProgress('total_score', gs.score);
 
   // Mark UI dirty every 20 frames for score
   _uiScoreCounter++;
@@ -1488,6 +2309,9 @@ function animate() {
   if (gs.magnet > 0) gs.magnet--;
   if (gs.speedBoost > 0) gs.speedBoost--;
   if (chaserHitCooldown > 0) chaserHitCooldown--;
+
+  // Mark dirty every frame while a boost is ticking so rings drain smoothly
+  if (gs.shield > 0 || gs.magnet > 0 || gs.speedBoost > 0 || gs.ammo > 0) _uiDirty = true;
 
   // ── Player movement
   player.position.x += (gs.targetX - player.position.x) * 0.2;
@@ -1625,6 +2449,10 @@ function animate() {
     if (!o.userData.alive) return;
     if (o.userData.isMovingCar) {
       o.position.z += spd * 2.5;
+      if (!o.userData.playedCarSound && o.position.z > -32) {
+        o.userData.playedCarSound = true;
+        sound.play('carComing1');
+      }
       obstacles.forEach(other => {
         if (other !== o && other.userData.alive && Math.abs(other.position.x - o.position.x) < 0.5) {
           const dz = other.position.z - o.position.z;
@@ -1660,9 +2488,11 @@ function animate() {
     if (hit) {
       if (gs.shield > 0) {
         gs.shield = 0;
+        sound.play('shieldHit');
         spawnParticles(o.position.x, o.position.y, o.position.z, 0x378ADD);
       } else {
         gs.lives--;
+        sound.play('hit');
         gs.invincible = 100;
         spawnParticles(o.position.x, o.position.y, o.position.z, 0xD85A30);
         _uiDirty = true;
@@ -1691,8 +2521,10 @@ function animate() {
     const pickDist = gs.magnet > 0 ? 1.8 : 0.9;
     if (Math.abs(player.position.x - c.position.x) < pickDist && Math.abs(player.position.z - c.position.z) < pickDist * 1.5) {
       gs.coins++;
+      sound.play('coin');
       spawnParticles(c.position.x, c.position.y, c.position.z, 0xEF9F27);
       scene.remove(c); c.userData.alive = false;
+      if (window.addMissionProgress) addMissionProgress('collect_coins', 1);
       _uiDirty = true;
     }
   });
@@ -1709,11 +2541,13 @@ function animate() {
     const dx = Math.abs(player.position.x - p.position.x);
     const dz = Math.abs(player.position.z - p.position.z);
     if (dx < 1 && dz < 1.2) {
+      sound.play('powerup');
       if (p.userData.type === 'shield') gs.shield = getUpgradeMax('shield');
       if (p.userData.type === 'magnet') gs.magnet = getUpgradeMax('magnet');
       if (p.userData.type === 'speed') gs.speedBoost = getUpgradeMax('speed');
       if (p.userData.type === 'gun') { gs.ammo += getUpgradeMax('gun'); gun.visible = true; }
       scene.remove(p); p.userData.alive = false;
+      if (window.addMissionProgress) addMissionProgress('pick_powerups', 1);
       _uiDirty = true;
     }
   });
@@ -1730,6 +2564,7 @@ function animate() {
       const o = obstacles[i];
       if (!o.userData.alive || b.userData.dead) continue;
       if (Math.abs(b.position.x - o.position.x) < 1.1 && Math.abs(b.position.z - o.position.z) < 1.1) {
+        sound.play('hit');
         spawnParticles(b.position.x, b.position.y, b.position.z, 0xEF9F27);
         scene.remove(b); b.userData.dead = true;
 
@@ -1738,6 +2573,7 @@ function animate() {
           spawnParticles(o.position.x, o.position.y, o.position.z, 0xD85A30);
           scene.remove(o); o.userData.alive = false;
           gs.score += 50; _uiDirty = true;
+          if (window.addMissionProgress) addMissionProgress('shoot_obstacles', 1);
         } else if (o.userData.hp !== Infinity) {
           // Provide feedback that it was hit
           o.position.y += 0.2;
@@ -1760,6 +2596,7 @@ function animate() {
     chaserMesh.rotation.y += 0.04;
     if (chaserMesh.position.z < player.position.z + 1.5 && chaserHitCooldown === 0 && gs.invincible === 0 && gs.shield === 0) {
       gs.lives--;
+      sound.play('hit');
       chaserHitCooldown = 200;
       gs.invincible = 200;
       chaserMesh.position.z = 12;
